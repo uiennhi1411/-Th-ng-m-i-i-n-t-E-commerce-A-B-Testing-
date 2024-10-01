@@ -1,0 +1,105 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+library(nycflights13)
+library(tidyverse)
+library(janitor)
+data <- read_csv(file = "datasets/ab_test_commerce.csv")
+data <- data |> clean_names() |> mutate(page = factor(page))
+data <- data |> mutate(con_treat = factor(con_treat))
+data = data |> mutate(time = minute(time) + hour(time)*60 + second(time)/60)
+glimpse(data)
+
+```
+
+```{r}
+data |> summarise (
+  n= n(),
+  .by = c(con_treat, page)
+)
+```
+Theo đề, con_treat - người dùng được đưa vào control group (control - sử dụng old_page) hay treatment group (treatment - sử dụng new_page). Nhưng dữ liệu lại có control cho new_page và treatment cho old_page. 
+Do đó ta cần hiệu chỉnh lại dữ liệu cho đúng mẫu.
+
+Nếu con_treat là control thì page là old_page và nếu con_treat là treatment thì page là new_page.
+```{r}
+data <- data |> mutate(con_treat = if_else(page == "old_page", "control", "treatment"),
+         page = if_else(con_treat == "control", "old_page", page))
+# hien data da xu li
+data |> summarise (
+  n= n(),
+  .by = c(con_treat, page)
+)
+```
+
+```{r}
+ggplot(data, aes(x = con_treat, y = time, fill = con_treat)) +
+  geom_violin() +
+  geom_boxplot(width = 0.15) +
+  labs(x = "Control & Treatment", y = "Times (minute)") + 
+  theme_bw() + theme(legend.position = "none")
+```
+2 trang web có sự tương đồng về thời gian hoạt động.
+Thông qua bảng tổng hợp và biểu đổ violin, một giả định có thể là “thời gian phiên làm việc của trang web mới và trang web cũ tương đồng nhau”. Do đó, ta cần kiểm chứng giả thuyết và đối thuyết sau:
+
+
+Hàm Permutation test:
+```{r}
+perm_test <- function(x, y, R, alter) {
+  n <- length(x)
+  a <- split(x, y)
+  res_perm <- numeric(R)
+  mean_A <- mean(a[[1]])
+  mean_B <- mean(a[[2]])
+  for (i in 1:R){
+    idx_a <- sample(x = 1:n, size = length(a[[1]]))
+    idx_b <- setdiff(x = 1:n, y = idx_a)
+    res_perm[i] <- mean(x[idx_a]) - mean(x[idx_b])
+  }
+  if (alter == 'left') {
+    p_value <- mean(res_perm < (mean_A - mean_B))
+  }
+  else {
+    if(alter == "right"){
+      p_value = mean(res_perm > (mean_A - mean_B))
+    }
+    else{
+      p_value = mean((abs(res_perm)) > abs((mean_A - mean_B)))
+    }
+  }
+  return (list(mean_A, mean_B, p_value))
+}
+```
+
+
+Dùng Permutation test để kiểm định cho tỷ lệ giao dịch
+H0: mean_converted_control = mean_converted_treatment
+H1: mean_converted_control < mean_converted_treatment
+```{r}
+perm_test(data$converted, factor(data$page, levels = c("new_page", "old_page")), R = 1000, alter = 'left')
+
+```
+--> p_value = 0.788 > alpha = 0.05
+--> không bác bỏ giả thuyết H0 với mức ý nghĩa 5%
+--> không có sự sai khác giữa trung bình tỉ lệ chuyển đổi của 2 trang web
+Với mức ý nghĩa α = 0.05, kết quả cho thấy Giả thuyết là không thể bị bác bỏ. Do đó, tỉ lệ chuyển đổi của trang web mới lớn hơn so với trang web cũ là không có ý nghĩa thống kê, hay chỉ là kết quả của sự ngẫu nhiên.
+
+
+
+
+Dùng Permutation test để kiểm định cho thời gian hoạt động với trang web
+H0: mean_time_control = mean_time_treatment
+H1: mean_time_control != mean_time_treatment
+```{r}
+perm_test(data$time, factor(data$page, levels = c("new_page", "old_page")), R = 1000, alter = 'two-side')
+```
+--> p_value = 0.773 > alpha = 0.05
+--> không bác bỏ giả thuyết H0 với mức ý nghĩa 5%
+--> không có sự sai khác giữa trung bình thời gian sử dụng 2 trang web
+Với mức ý nghĩa α = 0.05, kết quả cho thấy Giả thuyết là không thể bị bác bỏ. Do đó, việc thời gian phiên làm việc với trang web mới dài hơn so với trang web cũ là không có ý nghĩa thống kê, hay chỉ là kết quả của sự ngẫu nhiên.
+
+
+
+
